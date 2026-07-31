@@ -148,10 +148,12 @@ services:
       WIKI_URI: ${WIKI_URI:-}
 
       # AWS SES (for sending emails)
+      # Access key / secret are OPTIONAL: leave them empty to use the AWS default
+      # credential provider chain instead (EKS IRSA / instance profile / env).
       AWS_SES_REGION: ${AWS_SES_REGION}
-      AWS_SES_ACCESS_KEY_ID: ${AWS_SES_ACCESS_KEY_ID}
-      AWS_SES_SECRET_ACCESS_KEY: ${AWS_SES_SECRET_ACCESS_KEY}
-      SES_CONFIGURATION_SET: ${SES_CONFIGURATION_SET}
+      AWS_SES_ACCESS_KEY_ID: ${AWS_SES_ACCESS_KEY_ID:-}
+      AWS_SES_SECRET_ACCESS_KEY: ${AWS_SES_SECRET_ACCESS_KEY:-}
+      SES_CONFIGURATION_SET: ${SES_CONFIGURATION_SET:-}
       SES_CONFIGURATION_SET_NO_TRACKING: ${SES_CONFIGURATION_SET_NO_TRACKING:-}
 
       # Custom MAIL FROM subdomain (defaults to 'plunk'; override when
@@ -201,6 +203,13 @@ services:
       # Explicit SES sending rate (avoid silent fallback to 14/sec when
       # ses:GetSendQuota is denied or transiently fails at worker startup)
       EMAIL_RATE_LIMIT_PER_SECOND: ${EMAIL_RATE_LIMIT_PER_SECOND:-}
+
+      # Optional services (SERVICE=all). Set to "true" to skip starting them:
+      #  - DISABLE_SMTP: skip the inbound SMTP relay (not needed when sending via
+      #    the SES API); also avoids binding privileged ports 465/587 as non-root.
+      #  - DISABLE_WIKI: skip the docs site (binds privileged port 1000 as non-root).
+      DISABLE_SMTP: ${DISABLE_SMTP:-false}
+      DISABLE_WIKI: ${DISABLE_WIKI:-false}
 
     volumes:
       # Persistent storage for application data

@@ -32,8 +32,8 @@ Set your subdomains here. The application automatically derives all internal and
 | Variable                            | Required | Description                                                                                                                                      | Example                                         |
 | ----------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------- |
 | `AWS_SES_REGION`                    | Yes      | AWS region where SES is configured.                                                                                                              | `us-east-1`                                     |
-| `AWS_SES_ACCESS_KEY_ID`             | Yes      | AWS access key ID with SES send permissions.                                                                                                     | `AKIA...`                                       |
-| `AWS_SES_SECRET_ACCESS_KEY`         | Yes      | AWS secret access key for SES.                                                                                                                   | `wJalr...`                                      |
+| `AWS_SES_ACCESS_KEY_ID`             | No       | AWS access key ID with SES send permissions. Optional — leave empty (together with the secret) to use the AWS default credential provider chain (EKS IRSA / instance profile / ambient `AWS_*` env vars) instead of static keys. | `AKIA...`                                       |
+| `AWS_SES_SECRET_ACCESS_KEY`         | No       | AWS secret access key for SES. Optional; see `AWS_SES_ACCESS_KEY_ID`. Both must be set to use static credentials.                                | `wJalr...`                                      |
 | `SES_CONFIGURATION_SET`             | No       | SES configuration set name used for open/click tracking.                                                                                         | `plunk-configuration-set` (default)             |
 | `SES_CONFIGURATION_SET_NO_TRACKING` | No       | A second SES configuration set without tracking. When set, projects can toggle email tracking on/off. If omitted, the tracking toggle is hidden. | `plunk-no-tracking-configuration-set` (default) |
 | `MAIL_FROM_SUBDOMAIN`               | No       | Subdomain prefix used when constructing the MAIL FROM hostname for a verified domain (e.g. with default `plunk` and domain `yourdomain.com`, the MAIL FROM is `plunk.yourdomain.com`). Override when the default subdomain is already in use (e.g. by an R2/CDN custom domain), since the MAIL FROM hostname needs MX + TXT records that can't coexist with a CNAME. | `plunk`                                         |
@@ -72,9 +72,18 @@ Callers can pass an `Idempotency-Key` header to `POST /v1/track` and `POST /v1/s
 | -------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `IDEMPOTENCY_KEY_TTL_HOURS` | No       | How long a used key stays claimed before it can be reused. Expired keys are swept hourly, so raising this grows the `idempotency_keys` table proportionally. | `24`    |
 
+## Optional Services
+
+When running the all-in-one image (`SERVICE=all`), these toggles skip individual bundled services. Useful when a service isn't needed, or when it can't bind its privileged port as a non-root user (e.g. on EKS/Fargate).
+
+| Variable       | Required | Description                                                                                                                                                     | Default |
+| -------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `DISABLE_SMTP` | No       | Set to `true` to skip the inbound SMTP relay (ports 465/587). Safe when you send exclusively via the SES API and don't accept inbound SMTP.                     | `false` |
+| `DISABLE_WIKI` | No       | Set to `true` to skip the bundled docs site (port 1000).                                                                                                        | `false` |
+
 ## SMTP Server
 
-The optional SMTP relay lets you send emails through Plunk via the SMTP protocol.
+The optional SMTP relay lets you send emails through Plunk via the SMTP protocol (ignored when `DISABLE_SMTP=true`).
 
 | Variable          | Required | Description                                                                                                                        | Default     |
 | ----------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------- | ----------- |

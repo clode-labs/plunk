@@ -49,3 +49,9 @@ install-state.gz
 
 tsconfig.tsbuildinfo
 next-env.d.ts
+
+# Local self-hosting / testing artifacts
+docker-compose.override.yml
+
+# Local-only notes and scratch files — never commit
+tmp/

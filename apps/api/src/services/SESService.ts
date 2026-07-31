@@ -1,10 +1,11 @@
-import {SES} from '@aws-sdk/client-ses';
+import {SES, type SESClientConfig} from '@aws-sdk/client-ses';
 import signale from 'signale';
 
 import {
   AWS_SES_ACCESS_KEY_ID,
   AWS_SES_REGION,
   AWS_SES_SECRET_ACCESS_KEY,
+  AWS_SES_STATIC_CREDENTIALS,
   MAIL_FROM_SUBDOMAIN,
   SES_CONFIGURATION_SET,
   SES_CONFIGURATION_SET_NO_TRACKING,
@@ -13,15 +14,29 @@ import {
 
 /**
  * AWS SES Client
+ *
+ * When AWS_SES_ACCESS_KEY_ID / AWS_SES_SECRET_ACCESS_KEY are both set we pass
+ * them as static credentials. Otherwise we omit `credentials` entirely so the
+ * AWS SDK falls back to its default provider chain (env, ECS/EC2 instance
+ * profile, or EKS IRSA / web-identity token). This lets the same image run with
+ * a pod-assumed IAM role and no baked-in access keys.
  */
-export const ses = new SES({
+const sesClientConfig: SESClientConfig = {
   apiVersion: '2010-12-01',
   region: AWS_SES_REGION,
-  credentials: {
+};
+
+if (AWS_SES_STATIC_CREDENTIALS) {
+  sesClientConfig.credentials = {
     accessKeyId: AWS_SES_ACCESS_KEY_ID,
     secretAccessKey: AWS_SES_SECRET_ACCESS_KEY,
-  },
-});
+  };
+  signale.info('[SES] Using static AWS credentials from environment');
+} else {
+  signale.info('[SES] No static AWS keys set — using default credential provider chain (IRSA/instance profile/env)');
+}
+
+export const ses = new SES(sesClientConfig);
 
 interface SendRawEmailParams {
   from: {

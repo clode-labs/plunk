@@ -41,9 +41,15 @@ export const S3_FORCE_PATH_STYLE = validateEnv('S3_FORCE_PATH_STYLE', 'true') ==
 export const S3_ENABLED = S3_ACCESS_KEY_ID !== '' && S3_ACCESS_KEY_SECRET !== '';
 
 // AWS SES (required for email sending)
+// Region is always required. The access key / secret are OPTIONAL: when both are
+// provided we use them as static credentials; when either is empty we fall back
+// to the AWS SDK default credential provider chain (env vars, ECS/EC2 instance
+// profile, or EKS IRSA / web-identity). This lets the same image run either with
+// static keys or with a pod-assumed IAM role without baked-in credentials.
 export const AWS_SES_REGION = validateEnv('AWS_SES_REGION');
-export const AWS_SES_ACCESS_KEY_ID = validateEnv('AWS_SES_ACCESS_KEY_ID');
-export const AWS_SES_SECRET_ACCESS_KEY = validateEnv('AWS_SES_SECRET_ACCESS_KEY');
+export const AWS_SES_ACCESS_KEY_ID = validateEnv('AWS_SES_ACCESS_KEY_ID', '');
+export const AWS_SES_SECRET_ACCESS_KEY = validateEnv('AWS_SES_SECRET_ACCESS_KEY', '');
+export const AWS_SES_STATIC_CREDENTIALS = AWS_SES_ACCESS_KEY_ID !== '' && AWS_SES_SECRET_ACCESS_KEY !== '';
 
 // Custom MAIL FROM subdomain used to construct `<subdomain>.<your-domain>`
 // when a domain is added. Defaults to `plunk`. Override when `plunk.<your-domain>`

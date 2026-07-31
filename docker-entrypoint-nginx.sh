@@ -84,9 +84,13 @@ replace_urls_in_app "wiki" "/app/apps/wiki/.next/standalone/apps/wiki"
 echo "📋 Starting services with PM2..."
 
 # Create PM2 ecosystem file with environment variables
+# NOTE: `smtp` and `wiki` are filtered out at the bottom of this file when
+# DISABLE_SMTP / DISABLE_WIKI are set to "true". We disable SMTP because email
+# is sent via the SES API (the inbound SMTP relay is not used) and disable the
+# wiki because both bind privileged ports (465/587, 1000) that crash-loop when
+# the container runs as non-root (e.g. on EKS/Fargate). See issue #315.
 cat > /tmp/ecosystem.config.js << PMEOF
-module.exports = {
-  apps: [
+const apps = [
     {
       name: 'nginx',
       script: 'nginx',
@@ -203,7 +207,16 @@ module.exports = {
         WIKI_URI: '${WIKI_URI}'
       }
     }
-  ]
+];
+
+// Optionally drop services that aren't needed / can't bind privileged ports as
+// non-root. Toggled via DISABLE_SMTP / DISABLE_WIKI (read at PM2 runtime).
+const disabled = [];
+if (String(process.env.DISABLE_SMTP || '').toLowerCase() === 'true') disabled.push('smtp');
+if (String(process.env.DISABLE_WIKI || '').toLowerCase() === 'true') disabled.push('wiki');
+
+module.exports = {
+  apps: apps.filter(function (a) { return disabled.indexOf(a.name) === -1; })
 };
 PMEOF
 
@@ -218,6 +231,8 @@ echo "   Landing: http://${LANDING_DOMAIN}"
 echo "   Docs: http://${WIKI_DOMAIN}"
 echo ""
 echo "🚀 Starting all services..."
+[ "$(echo "${DISABLE_SMTP:-}" | tr '[:upper:]' '[:lower:]')" = "true" ] && echo "   ⏭️  SMTP relay disabled (DISABLE_SMTP=true) — sending via SES API"
+[ "$(echo "${DISABLE_WIKI:-}" | tr '[:upper:]' '[:lower:]')" = "true" ] && echo "   ⏭️  Wiki/docs disabled (DISABLE_WIKI=true)"
 echo ""
 
 # Start all services with PM2
