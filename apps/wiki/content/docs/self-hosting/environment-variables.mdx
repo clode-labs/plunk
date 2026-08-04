@@ -72,6 +72,15 @@ Callers can pass an `Idempotency-Key` header to `POST /v1/track` and `POST /v1/s
 | -------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `IDEMPOTENCY_KEY_TTL_HOURS` | No       | How long a used key stays claimed before it can be reused. Expired keys are swept hourly, so raising this grows the `idempotency_keys` table proportionally. | `24`    |
 
+## Service Selection
+
+The same image runs either the whole stack or a single service, so services can be scaled independently — for example one Deployment per service in Kubernetes. Set it with the `SERVICE` variable or as the first argument: `docker run <image> api`.
+
+| Variable         | Required | Description                                                                                                                                                                   | Default |
+| ---------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `SERVICE`        | No       | Which service to run: `all`, `api`, `worker`, `smtp`, `web`, `landing`, or `wiki`. nginx is started only for `all`; when running single services, route to each one directly. | `all`   |
+| `RUN_MIGRATIONS` | No       | Whether this container applies database migrations on start. Defaults to `true` for `all` and `api`, `false` otherwise, so replicas don't race. Set explicitly when a separate Job applies them. | *(per service)* |
+
 ## Optional Services
 
 When running the all-in-one image (`SERVICE=all`), these toggles skip individual bundled services. Useful when a service isn't needed, or when it can't bind its privileged port as a non-root user (e.g. on EKS/Fargate).

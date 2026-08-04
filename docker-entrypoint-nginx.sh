@@ -1,36 +1,69 @@
 #!/bin/sh
 set -e
 
-# Nginx-enabled Docker Entrypoint for Plunk
-# Starts all Plunk services with nginx reverse proxy
+# Docker entrypoint for Plunk.
+#
+# One image can run either the whole stack or a single service, so that each
+# service can be scaled independently (for example, one Deployment per service
+# in Kubernetes). The service is read from the first argument, falling back to
+# the SERVICE environment variable, and defaults to "all":
+#
+#   docker run <image>          # everything, behind nginx (default)
+#   docker run <image> api      # API server only
+#   docker run <image> worker   # queue worker only
+#   docker run <image> smtp     # SMTP relay only
+#   docker run <image> web      # dashboard only
+#   docker run <image> landing  # landing site only
+#   docker run <image> wiki     # docs site only
+#
+# nginx is only started for "all"; when running a single service, route to it
+# directly (an Ingress or load balancer in front of each Deployment).
 
-echo "🚀 Starting Plunk with Nginx reverse proxy..."
-echo "📦 Service: ${SERVICE:-all}"
+SERVICE="${1:-${SERVICE:-all}}"
 
-# Only run with SERVICE=all for nginx setup
-if [ "$SERVICE" != "all" ]; then
-    echo "⚠️  This nginx-enabled image only supports SERVICE=all"
-    echo "   For individual services, use the standard Plunk image"
+case "$SERVICE" in
+  all|api|worker|smtp|web|landing|wiki) ;;
+  *)
+    echo "❌ Unknown service '${SERVICE}'"
+    echo "   Valid values: all, api, worker, smtp, web, landing, wiki"
     exit 1
-fi
+    ;;
+esac
 
-# Run database migrations
-echo "🗄️  Running database migrations..."
-# Call Prisma binary directly for fastest startup (avoids Yarn workspace resolution and npx overhead)
-# The Prisma client and schema are already available from the build
-if ! /app/node_modules/.bin/prisma migrate deploy --schema=/app/packages/db/prisma/schema.prisma; then
-  echo ""
-  echo "❌ ERROR: Database migration failed!"
-  echo "   The container cannot start with failed migrations."
-  echo "   Please check:"
-  echo "   1. DATABASE_URL is set correctly"
-  echo "   2. Database server is accessible from this container"
-  echo "   3. Database credentials are valid"
-  echo "   4. Migration logs above for specific errors"
-  echo ""
-  exit 1
+echo "🚀 Starting Plunk"
+echo "📦 Service: ${SERVICE}"
+
+# Database migrations.
+#
+# Only the API and the full stack apply migrations by default; running them from
+# every replica of every service would race. Set RUN_MIGRATIONS explicitly to
+# override — for example RUN_MIGRATIONS=false when a separate Job applies them,
+# or RUN_MIGRATIONS=true on a one-shot container.
+case "$SERVICE" in
+  all|api) RUN_MIGRATIONS="${RUN_MIGRATIONS:-true}" ;;
+  *)       RUN_MIGRATIONS="${RUN_MIGRATIONS:-false}" ;;
+esac
+
+if [ "$RUN_MIGRATIONS" = "true" ]; then
+  echo "🗄️  Running database migrations..."
+  # Call Prisma binary directly for fastest startup (avoids Yarn workspace resolution and npx overhead)
+  # The Prisma client and schema are already available from the build
+  if ! /app/node_modules/.bin/prisma migrate deploy --schema=/app/packages/db/prisma/schema.prisma; then
+    echo ""
+    echo "❌ ERROR: Database migration failed!"
+    echo "   The container cannot start with failed migrations."
+    echo "   Please check:"
+    echo "   1. DATABASE_URL is set correctly"
+    echo "   2. Database server is accessible from this container"
+    echo "   3. Database credentials are valid"
+    echo "   4. Migration logs above for specific errors"
+    echo ""
+    exit 1
+  fi
+  echo "✅ Database migrations completed successfully"
+else
+  echo "⏭️  Skipping database migrations (RUN_MIGRATIONS=false)"
 fi
-echo "✅ Database migrations completed successfully"
 
 # Setup nginx configuration and source it to get env vars
 . /app/docker/nginx/setup-nginx.sh
@@ -72,23 +105,36 @@ echo "   LANDING_DOMAIN=www.example.com"
 echo "   WIKI_DOMAIN=docs.example.com"
 echo "   USE_HTTPS=true"
 
-# Source the optimized URL replacement script
-. /app/docker/replace-urls-optimized.sh
+# Rewrite the build-time URLs baked into the Next.js bundles.
+#
+# Only done for the Next.js apps that are actually being started, so a single
+# service (api / worker / smtp) does not pay the startup cost of rewriting
+# bundles it never serves.
+if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "web" ] || [ "$SERVICE" = "landing" ] || [ "$SERVICE" = "wiki" ]; then
+  # Source the optimized URL replacement script
+  . /app/docker/replace-urls-optimized.sh
 
-# Replace URLs in all Next.js apps using optimized function
-# This uses pre-generated manifests from build time instead of scanning all files
-replace_urls_in_app "web" "/app/apps/web/.next/standalone/apps/web"
-replace_urls_in_app "landing" "/app/apps/landing/.next/standalone/apps/landing"
-replace_urls_in_app "wiki" "/app/apps/wiki/.next/standalone/apps/wiki"
+  # This uses pre-generated manifests from build time instead of scanning all files
+  if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "web" ]; then
+    replace_urls_in_app "web" "/app/apps/web/.next/standalone/apps/web"
+  fi
+  if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "landing" ]; then
+    replace_urls_in_app "landing" "/app/apps/landing/.next/standalone/apps/landing"
+  fi
+  if [ "$SERVICE" = "all" ] || [ "$SERVICE" = "wiki" ]; then
+    replace_urls_in_app "wiki" "/app/apps/wiki/.next/standalone/apps/wiki"
+  fi
+fi
 
 echo "📋 Starting services with PM2..."
 
-# Create PM2 ecosystem file with environment variables
-# NOTE: `smtp` and `wiki` are filtered out at the bottom of this file when
-# DISABLE_SMTP / DISABLE_WIKI are set to "true". We disable SMTP because email
-# is sent via the SES API (the inbound SMTP relay is not used) and disable the
-# wiki because both bind privileged ports (465/587, 1000) that crash-loop when
-# the container runs as non-root (e.g. on EKS/Fargate). See issue #315.
+# Create PM2 ecosystem file with environment variables.
+#
+# Every service is declared here; the filter at the bottom of the generated file
+# decides which ones actually start, based on SERVICE (and, for the full stack,
+# DISABLE_SMTP / DISABLE_WIKI). Note that smtp (465/587) and wiki (1000) bind
+# privileged ports, which fail for a non-root user unless the ports are
+# overridden via PORT_SECURE / PORT_SUBMISSION. See issue #315.
 cat > /tmp/ecosystem.config.js << PMEOF
 const apps = [
     {
@@ -145,8 +191,8 @@ const apps = [
         NODE_ENV: 'production',
         API_URI: '${API_URI}',
         SMTP_DOMAIN: '${SMTP_DOMAIN:-}',
-        PORT_SECURE: '465',
-        PORT_SUBMISSION: '587',
+        PORT_SECURE: '${PORT_SECURE:-465}',
+        PORT_SUBMISSION: '${PORT_SUBMISSION:-587}',
         MAX_RECIPIENTS: '${MAX_RECIPIENTS:-5}',
         CERT_PATH: '/certs',
         ACME_JSON_PATH: '/certs/acme.json'
@@ -209,14 +255,24 @@ const apps = [
     }
 ];
 
-// Optionally drop services that aren't needed / can't bind privileged ports as
-// non-root. Toggled via DISABLE_SMTP / DISABLE_WIKI (read at PM2 runtime).
+// Select which of the above to start.
+//
+// SERVICE=all starts the whole stack behind nginx; any other value starts that
+// single service on its own, so each can be scaled independently.
+const service = '${SERVICE}';
+const selected = service === 'all' ? null : [service];
+
+// For the full stack, individual services can still be dropped when they are
+// not needed or cannot bind their privileged port as a non-root user.
 const disabled = [];
 if (String(process.env.DISABLE_SMTP || '').toLowerCase() === 'true') disabled.push('smtp');
 if (String(process.env.DISABLE_WIKI || '').toLowerCase() === 'true') disabled.push('wiki');
 
 module.exports = {
-  apps: apps.filter(function (a) { return disabled.indexOf(a.name) === -1; })
+  apps: apps.filter(function (a) {
+    if (selected) return selected.indexOf(a.name) !== -1;
+    return disabled.indexOf(a.name) === -1;
+  })
 };
 PMEOF
 
